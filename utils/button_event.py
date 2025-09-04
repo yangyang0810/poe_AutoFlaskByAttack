@@ -85,16 +85,32 @@ class btn_events():
             buff_key = [self.main.from_setting('buff', f'key{i}', 'list') for i in range(5)]
             buff_time = [self.main.from_setting('buff', f'time{i}', 'list') for i in range(5)]
             trigger_key = [self.main.from_setting('trigger', f'key{i}', 'list') for i in range(5)]
+            
+            # Get health-related settings
+            health_flask_key = [self.main.from_setting('health', f'flask_key{i}', 'list') for i in range(5)]
+            health_flask_time = [self.main.from_setting('health', f'flask_time{i}', 'list') for i in range(5)]
+            health_threshold = [self.main.from_setting('health', f'threshold{i}', 'list') for i in range(5)]
+            emergency_flask_key = [self.main.from_setting('emergency', f'flask_key{i}', 'list') for i in range(5)]
+            emergency_flask_time = [self.main.from_setting('emergency', f'flask_time{i}', 'list') for i in range(5)]
+            
             setting = {
                 'switch':switch,
                 'flask_key':flask_key,
                 'flask_time':flask_time,
                 'buff_key':buff_key,
                 'buff_time':buff_time,
-                'trigger_key':trigger_key
+                'trigger_key':trigger_key,
+                'health_flask_key':health_flask_key,
+                'health_flask_time':health_flask_time,
+                'health_threshold':health_threshold,
+                'emergency_flask_key':emergency_flask_key,
+                'emergency_flask_time':emergency_flask_time
             }
             self.main.start_stop(setting)
         else:
+            # Stop health monitoring when stopping
+            if hasattr(self.main, 'linstener') and hasattr(self.main.linstener, 'health_monitor'):
+                self.main.linstener.health_monitor.stop_monitoring()
             self.main.start_stop()
         self.main.ui.enable_edit(True ,'all')
 

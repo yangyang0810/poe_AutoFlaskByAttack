@@ -1,3 +1,5 @@
 pyqt5
 pynput==1.6.8
 pywin32
+Pillow
+numpy

@@ -1,6 +1,7 @@
 default_setting = {
     'global':{
-        'key':''
+        'key':'',
+        'health_monitor_enabled':'True'
     },
     'flask':{
         'key0':'[,,,,]',
@@ -25,6 +26,35 @@ default_setting = {
         'time3':'[,,,,]',
         'key4':'[,,,,]',
         'time4':'[,,,,]'
+    },
+    'health':{
+        'flask_key0':'[,,]',
+        'flask_time0':'[,,]',
+        'threshold0':'[30,30,30]',
+        'flask_key1':'[,,]',
+        'flask_time1':'[,,]',
+        'threshold1':'[30,30,30]',
+        'flask_key2':'[,,]',
+        'flask_time2':'[,,]',
+        'threshold2':'[30,30,30]',
+        'flask_key3':'[,,]',
+        'flask_time3':'[,,]',
+        'threshold3':'[30,30,30]',
+        'flask_key4':'[,,]',
+        'flask_time4':'[,,]',
+        'threshold4':'[30,30,30]'
+    },
+    'emergency':{
+        'flask_key0':'[,]',
+        'flask_time0':'[,]',
+        'flask_key1':'[,]',
+        'flask_time1':'[,]',
+        'flask_key2':'[,]',
+        'flask_time2':'[,]',
+        'flask_key3':'[,]',
+        'flask_time3':'[,]',
+        'flask_key4':'[,]',
+        'flask_time4':'[,]'
     },
     'trigger':{
         'key0':'[,,]',
