@@ -6,11 +6,15 @@ import win32gui
 
 class poe_detector(QThread):
     playing_signal = pyqtSignal(bool)
+    
     def __init__(self, main):
         super().__init__()
         self.main = main
         # self.game = '小算盤' # for debug
-        self.game = 'Path of Exile'
+        self.games = {
+            'poe1': 'Path of Exile',
+            'poe2': 'Path of Exile 2'
+        }
         self.this_app = 'POE自動喝水'
         self.float_win = '懸浮視窗'
         self.poe_hWnd = 0
@@ -44,10 +48,17 @@ class poe_detector(QThread):
         except:
             return False, (0,0,0,0)
 
+    def detect_current_game(self):
+        """Detect which game window is currently active based on current mode"""
+        current_mode = getattr(self.main, 'current_mode', 'poe1')
+        game_title = self.games.get(current_mode, self.games['poe1'])
+        return win32gui.FindWindow(None, game_title)
+    
     def run(self):
         while 1:
-            self.poe_hWnd = win32gui.FindWindow(None, self.game)
+            self.poe_hWnd = self.detect_current_game()
             self.this_hWnds = [self.this_hWnd, self.float_hWnd, self.poe_hWnd]
+            
             if self.check_immediately():
                 self.playing_signal.emit(True)
             else:

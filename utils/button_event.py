@@ -211,6 +211,87 @@ class btn_events():
     def check_set_enable_status(self):
         self.main.check_set_enable_status()
 
+    def cb_poe2_auto_enabled(self, state):
+        """Handle POE2 auto flask enabled checkbox"""
+        enabled = state == 2  # Qt.Checked
+        self.main.modfy_setting('poe2_auto_flask', 'enabled', enabled)
+        
+        # Update health monitor settings
+        if hasattr(self.main, 'linstener') and hasattr(self.main.linstener, 'health_monitor'):
+            if enabled:
+                health_threshold = float(self.main.from_setting('poe2_auto_flask', 'health_threshold', 'str')) / 100.0
+                mana_threshold = float(self.main.from_setting('poe2_auto_flask', 'mana_threshold', 'str')) / 100.0
+                self.main.linstener.health_monitor.set_health_threshold(health_threshold)
+                self.main.linstener.health_monitor.set_mana_threshold(mana_threshold)
+                print(f"POE2 auto flask enabled - Health: {health_threshold*100}%, Mana: {mana_threshold*100}%")
+            else:
+                print("POE2 auto flask disabled")
+    
+    def edit_health_threshold_changed(self):
+        """Handle health threshold change"""
+        try:
+            threshold = int(self.main.ui.edit_health_threshold.text())
+            threshold = max(10, min(90, threshold))  # Clamp between 10-90
+            self.main.ui.edit_health_threshold.setText(str(threshold))
+            self.main.modfy_setting('poe2_auto_flask', 'health_threshold', threshold)
+            
+            # Update health monitor
+            if hasattr(self.main, 'linstener') and hasattr(self.main.linstener, 'health_monitor'):
+                self.main.linstener.health_monitor.set_health_threshold(threshold / 100.0)
+                print(f"Health threshold updated to {threshold}%")
+        except ValueError:
+            self.main.ui.edit_health_threshold.setText("70")  # Default value
+    
+    def edit_mana_threshold_changed(self):
+        """Handle mana threshold change"""
+        try:
+            threshold = int(self.main.ui.edit_mana_threshold.text())
+            threshold = max(10, min(90, threshold))  # Clamp between 10-90
+            self.main.ui.edit_mana_threshold.setText(str(threshold))
+            self.main.modfy_setting('poe2_auto_flask', 'mana_threshold', threshold)
+            
+            # Update health monitor
+            if hasattr(self.main, 'linstener') and hasattr(self.main.linstener, 'health_monitor'):
+                self.main.linstener.health_monitor.set_mana_threshold(threshold / 100.0)
+                print(f"Mana threshold updated to {threshold}%")
+        except ValueError:
+            self.main.ui.edit_mana_threshold.setText("50")  # Default value
+
+    def tab_changed(self, index):
+        """Handle tab change between POE1 and POE2"""
+        if index == 0:  # POE1 tab
+            print("Switched to POE1 mode")
+            self.main.current_mode = 'poe1'
+            # Stop POE2 health monitoring if active
+            if hasattr(self.main, 'linstener') and hasattr(self.main.linstener, 'health_monitor'):
+                if self.main.linstener.health_monitor.monitoring:
+                    self.main.linstener.health_monitor.stop_monitoring()
+        
+        elif index == 1:  # POE2 tab
+            print("Switched to POE2 mode")
+            self.main.current_mode = 'poe2'
+            # Update health monitor mode
+            if hasattr(self.main, 'linstener') and hasattr(self.main.linstener, 'health_monitor'):
+                self.main.linstener.health_monitor.set_current_mode('poe2')
+                
+                # Start POE2 health monitoring if enabled
+                poe2_enabled = self.main.from_setting('poe2_auto_flask', 'enabled', 'bool')
+                if poe2_enabled:
+                    health_threshold = float(self.main.from_setting('poe2_auto_flask', 'health_threshold', 'str')) / 100.0
+                    mana_threshold = float(self.main.from_setting('poe2_auto_flask', 'mana_threshold', 'str')) / 100.0
+                    check_interval = float(self.main.from_setting('poe2_auto_flask', 'check_interval', 'str'))
+                    
+                    self.main.linstener.health_monitor.set_health_threshold(health_threshold)
+                    self.main.linstener.health_monitor.set_mana_threshold(mana_threshold)
+                    self.main.linstener.health_monitor.set_check_interval(check_interval)
+                    
+                    if not self.main.linstener.health_monitor.monitoring:
+                        self.main.linstener.health_monitor.start_monitoring()
+                        print("Started health monitoring for POE2")
+        
+        # Update window title
+        self.main.update_window_title()
+
 def take_text(edit_list):
     _list = []
     for edit in edit_list:

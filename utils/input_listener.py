@@ -98,6 +98,12 @@ class input_listener():
         # Initialize health monitor
         self.health_monitor = HealthMonitor(main.detector)
         self.health_monitoring_enabled = False
+        
+        # Connect to flask trigger signal
+        self.health_monitor.flask_trigger.connect(self.on_flask_trigger)
+        self.last_health_flask_time = 0
+        self.last_mana_flask_time = 0
+        self.flask_cooldown = 1.0  # 1 second cooldown between flask uses
 
     def button_regularization(self, btn):
         return str(btn).split('.')[-1].replace("'",'')
@@ -331,6 +337,73 @@ class input_listener():
                     sleep_min = max(sleep_min, 0.2)   # Less frequent when healthy
             
             time.sleep(sleep_min)
+
+    def on_flask_trigger(self, flask_type):
+        """Handle automatic flask trigger based on health/mana thresholds"""
+        current_time = time.time()
+        
+        # Check if POE2 auto flask is enabled
+        poe2_enabled = self.main.from_setting('poe2_auto_flask', 'enabled', 'bool')
+        if not poe2_enabled:
+            return
+        
+        # Check if we're in POE2 mode
+        if not hasattr(self.main, 'current_mode') or self.main.current_mode != 'poe2':
+            return
+        
+        try:
+            if flask_type == 'health':
+                # Check cooldown
+                if current_time - self.last_health_flask_time < self.flask_cooldown:
+                    return
+                
+                health_flask_key = self.main.from_setting('poe2_auto_flask', 'health_flask_key', 'str')
+                if health_flask_key:
+                    self.simulate_key_press(health_flask_key)
+                    self.last_health_flask_time = current_time
+                    print(f"Auto triggered health flask: {health_flask_key}")
+            
+            elif flask_type == 'mana':
+                # Check cooldown
+                if current_time - self.last_mana_flask_time < self.flask_cooldown:
+                    return
+                
+                mana_flask_key = self.main.from_setting('poe2_auto_flask', 'mana_flask_key', 'str')
+                if mana_flask_key:
+                    self.simulate_key_press(mana_flask_key)
+                    self.last_mana_flask_time = current_time
+                    print(f"Auto triggered mana flask: {mana_flask_key}")
+                    
+        except Exception as e:
+            print(f"Error triggering flask: {e}")
+    
+    def simulate_key_press(self, key):
+        """Simulate a key press"""
+        try:
+            # Use pynput to simulate key press
+            from pynput.keyboard import Key, Controller
+            keyboard = Controller()
+            
+            # Handle special keys
+            if key.lower() in ['space', ' ']:
+                keyboard.press(Key.space)
+                keyboard.release(Key.space)
+            elif key.lower() == 'shift':
+                keyboard.press(Key.shift)
+                keyboard.release(Key.shift)
+            elif key.lower() == 'ctrl':
+                keyboard.press(Key.ctrl)
+                keyboard.release(Key.ctrl)
+            elif key.lower() == 'alt':
+                keyboard.press(Key.alt)
+                keyboard.release(Key.alt)
+            else:
+                # Regular character
+                keyboard.press(key.lower())
+                keyboard.release(key.lower())
+                
+        except Exception as e:
+            print(f"Error simulating key press {key}: {e}")
 
     def join(self):
         self.t.join()

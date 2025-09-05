@@ -1,7 +1,16 @@
 default_setting = {
     'global':{
         'key':'',
-        'health_monitor_enabled':'True'
+        'health_monitor_enabled':'True',
+        'game_type':'auto'  # 'auto', 'poe1', 'poe2'
+    },
+    'poe2_auto_flask':{
+        'enabled':'False',
+        'health_threshold':'70',  # Health percentage threshold for health flask
+        'mana_threshold':'50',    # Mana percentage threshold for mana flask
+        'health_flask_key':'1',   # Key for health flask
+        'mana_flask_key':'2',     # Key for mana flask
+        'check_interval':'0.2'    # Check interval in seconds
     },
     'flask':{
         'key0':'[,,,,]',

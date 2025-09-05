@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(myicon)
         self.PLAYING = False
         self.FLOATING = True
+        self.current_mode = 'poe1'  # Default to POE1 mode
         self.detector = poe_detector(self)
         self.detector.playing_signal.connect(self.set_playing)
         self.SETTING = False
@@ -65,6 +66,12 @@ class MainWindow(QMainWindow):
         self.linstener = input_listener(self)
         self.linstener.start()
         self.detector.start()
+        
+        # Connect health monitor signals to UI updates
+        if hasattr(self.linstener, 'health_monitor'):
+            self.linstener.health_monitor.health_changed.connect(self.on_health_changed)
+            self.linstener.health_monitor.mana_changed.connect(self.on_mana_changed)
+            self.linstener.health_monitor.flask_trigger.connect(self.on_flask_triggered)
         self.check_updata = check_version_thread()
         self.check_updata.update_signal.connect(self.need2update)
         self.check_updata.start()
@@ -123,6 +130,35 @@ class MainWindow(QMainWindow):
 
     def need2update(self):
         display_image(self.ui.label_logo, logo_update_png)
+    
+    def update_window_title(self):
+        """Update window title based on current mode"""
+        if self.current_mode == 'poe1':
+            self.setWindowTitle("POE1自動喝水")
+        elif self.current_mode == 'poe2':
+            self.setWindowTitle("POE2自動喝水")
+        else:
+            self.setWindowTitle("POE自動喝水")
+    
+    def on_health_changed(self, health_percent):
+        """Handle health change signal"""
+        if self.current_mode == 'poe2':
+            current_mana = getattr(self.linstener.health_monitor, 'current_mana', 1.0) * 100
+            self.ui.update_poe2_status(health_percent * 100, current_mana)
+    
+    def on_mana_changed(self, mana_percent):
+        """Handle mana change signal"""
+        if self.current_mode == 'poe2':
+            current_health = getattr(self.linstener.health_monitor, 'current_health', 1.0) * 100
+            self.ui.update_poe2_status(current_health, mana_percent * 100)
+    
+    def on_flask_triggered(self, flask_type):
+        """Handle flask trigger signal"""
+        if self.current_mode == 'poe2':
+            current_health = getattr(self.linstener.health_monitor, 'current_health', 1.0) * 100
+            current_mana = getattr(self.linstener.health_monitor, 'current_mana', 1.0) * 100
+            status = f"触发{flask_type}药水"
+            self.ui.update_poe2_status(current_health, current_mana, status)
 
     def new_config(self, config_name):
         save_config(f"./configs/{config_name}.ini", default_setting)

@@ -5,44 +5,63 @@ import numpy as np
 from PyQt5.QtCore import QThread, pyqtSignal
 
 class HealthMonitor(QThread):
-    """Health monitoring system for POE game"""
+    """Health and mana monitoring system for POE games"""
     health_changed = pyqtSignal(float)  # Signal emitted when health changes significantly
+    mana_changed = pyqtSignal(float)    # Signal emitted when mana changes significantly
+    flask_trigger = pyqtSignal(str)     # Signal to trigger flask ('health' or 'mana')
     
     def __init__(self, poe_detector):
         super().__init__()
         self.poe_detector = poe_detector
         self.current_health = 1.0
         self.current_mana = 1.0
-        self.health_threshold = 0.3  # Default 30% health threshold
-        self.emergency_threshold = 0.15  # Emergency 15% threshold
-        self.check_interval = 0.1  # Check every 100ms
+        self.health_threshold = 0.7  # Default 70% health threshold
+        self.mana_threshold = 0.5    # Default 50% mana threshold
+        self.check_interval = 0.2    # Check every 200ms
         self.last_check_time = 0
         self.monitoring = False
+        self.current_mode = 'poe1'  # Default mode
         
-        # Health bar coordinates (relative to game window)
-        # These may need adjustment based on game resolution and UI scale
-        self.health_bar_relative = {
-            'x_start': 0.02,   # 2% from left edge
-            'y_start': 0.85,   # 85% from top
-            'x_end': 0.25,     # 25% from left edge  
-            'y_end': 0.90      # 90% from top
+        # Different bar positions for different games
+        self.bar_configs = {
+            'poe1': {
+                'health': {
+                    'x_start': 0.02, 'y_start': 0.85,
+                    'x_end': 0.25, 'y_end': 0.90
+                },
+                'mana': {
+                    'x_start': 0.02, 'y_start': 0.90,
+                    'x_end': 0.25, 'y_end': 0.95
+                }
+            },
+            'poe2': {
+                'health': {
+                    'x_start': 0.02, 'y_start': 0.88,  # May need adjustment for POE2
+                    'x_end': 0.25, 'y_end': 0.93
+                },
+                'mana': {
+                    'x_start': 0.75, 'y_start': 0.88,  # Mana might be on the right in POE2
+                    'x_end': 0.98, 'y_end': 0.93
+                }
+            }
         }
-        
-        # Mana bar coordinates
-        self.mana_bar_relative = {
-            'x_start': 0.02,
-            'y_start': 0.90,
-            'x_end': 0.25,
-            'y_end': 0.95
-        }
+    
+    def set_current_mode(self, mode):
+        """Set current game mode"""
+        self.current_mode = mode
+        print(f"Health monitor set to {mode} mode")
     
     def set_health_threshold(self, threshold):
         """Set health threshold (0.0 to 1.0)"""
-        self.health_threshold = max(0.1, min(0.8, threshold))
+        self.health_threshold = max(0.1, min(0.9, threshold))
     
-    def set_emergency_threshold(self, threshold):
-        """Set emergency threshold (0.0 to 1.0)"""
-        self.emergency_threshold = max(0.05, min(0.3, threshold))
+    def set_mana_threshold(self, threshold):
+        """Set mana threshold (0.0 to 1.0)"""
+        self.mana_threshold = max(0.1, min(0.9, threshold))
+    
+    def set_check_interval(self, interval):
+        """Set check interval in seconds"""
+        self.check_interval = max(0.1, min(1.0, interval))
     
     def get_current_health(self):
         """Get current health percentage"""
@@ -56,9 +75,9 @@ class HealthMonitor(QThread):
         """Check if health is below threshold"""
         return self.current_health <= self.health_threshold
     
-    def is_emergency_health(self):
-        """Check if health is in emergency range"""
-        return self.current_health <= self.emergency_threshold
+    def is_low_mana(self):
+        """Check if mana is below threshold"""
+        return self.current_mana <= self.mana_threshold
     
     def get_bar_region(self, bar_config):
         """Calculate screen coordinates for health/mana bar"""
@@ -167,23 +186,42 @@ class HealthMonitor(QThread):
             if not self.poe_detector.check_immediately():
                 return
             
-            # Get health bar region and screenshot
-            health_region = self.get_bar_region(self.health_bar_relative)
+            # Get current game config based on mode
+            game_config = self.bar_configs.get(self.current_mode, self.bar_configs['poe1'])
+            
+            # Monitor health
+            health_region = self.get_bar_region(game_config['health'])
             if health_region:
                 health_screenshot = ImageGrab.grab(health_region)
                 new_health = self.analyze_health_bar(health_screenshot)
                 
-                # Emit signal if health changed significantly
-                if abs(new_health - self.current_health) > 0.05:
+                # Check for significant health change
+                if abs(new_health - self.current_health) > 0.05:  # 5% change threshold
+                    self.current_health = new_health
                     self.health_changed.emit(new_health)
+                else:
+                    self.current_health = new_health
                 
-                self.current_health = new_health
+                # Check if health flask should be triggered
+                if self.is_low_health():
+                    self.flask_trigger.emit('health')
             
-            # Get mana bar region and screenshot
-            mana_region = self.get_bar_region(self.mana_bar_relative)
+            # Monitor mana
+            mana_region = self.get_bar_region(game_config['mana'])
             if mana_region:
                 mana_screenshot = ImageGrab.grab(mana_region)
-                self.current_mana = self.analyze_mana_bar(mana_screenshot)
+                new_mana = self.analyze_mana_bar(mana_screenshot)
+                
+                # Check for significant mana change
+                if abs(new_mana - self.current_mana) > 0.05:  # 5% change threshold
+                    self.current_mana = new_mana
+                    self.mana_changed.emit(new_mana)
+                else:
+                    self.current_mana = new_mana
+                
+                # Check if mana flask should be triggered
+                if self.is_low_mana():
+                    self.flask_trigger.emit('mana')
                 
         except Exception as e:
             print(f"Error updating health/mana: {e}")
