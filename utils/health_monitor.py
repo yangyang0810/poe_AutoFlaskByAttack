@@ -21,6 +21,7 @@ class HealthMonitor(QThread):
         self.last_check_time = 0
         self.monitoring = False
         self.current_mode = 'poe1'  # Default mode
+        self.debug_enabled = False  # Print debug percentages when enabled
         
         # Different bar positions for different games
         self.bar_configs = {
@@ -36,12 +37,12 @@ class HealthMonitor(QThread):
             },
             'poe2': {
                 'health': {
-                    'x_start': 0.02, 'y_start': 0.88,  # May need adjustment for POE2
-                    'x_end': 0.25, 'y_end': 0.93
+                    'x_start': 0.01, 'y_start': 0.90,
+                    'x_end': 0.14, 'y_end': 0.98
                 },
                 'mana': {
-                    'x_start': 0.75, 'y_start': 0.88,  # Mana might be on the right in POE2
-                    'x_end': 0.98, 'y_end': 0.93
+                    'x_start': 0.86, 'y_start': 0.90,
+                    'x_end': 0.99, 'y_end': 0.98
                 }
             }
         }
@@ -62,6 +63,10 @@ class HealthMonitor(QThread):
     def set_check_interval(self, interval):
         """Set check interval in seconds"""
         self.check_interval = max(0.1, min(1.0, interval))
+    
+    def set_debug_enabled(self, enabled):
+        """Enable or disable debug printing"""
+        self.debug_enabled = bool(enabled)
     
     def get_current_health(self):
         """Get current health percentage"""
@@ -202,6 +207,10 @@ class HealthMonitor(QThread):
                 else:
                     self.current_health = new_health
                 
+                # Debug print
+                if self.debug_enabled:
+                    print(f"[POE2] Health: {self.current_health*100:.0f}%")
+
                 # Check if health flask should be triggered
                 if self.is_low_health():
                     self.flask_trigger.emit('health')
@@ -219,6 +228,10 @@ class HealthMonitor(QThread):
                 else:
                     self.current_mana = new_mana
                 
+                # Debug print
+                if self.debug_enabled:
+                    print(f"[POE2] Mana: {self.current_mana*100:.0f}%")
+
                 # Check if mana flask should be triggered
                 if self.is_low_mana():
                     self.flask_trigger.emit('mana')
