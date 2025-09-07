@@ -71,6 +71,7 @@ class Delaybuff(flaskbuff):
 
 class input_listener():
     def __init__(self, main):
+        self.main = main  # Store main reference
         self.start_move_floating = main.start_move_floating
         self.start_stop = main.event.btn_start
         self.is_working = getattr(main, 'is_working')
@@ -103,7 +104,8 @@ class input_listener():
         self.health_monitor.flask_trigger.connect(self.on_flask_trigger)
         self.last_health_flask_time = 0
         self.last_mana_flask_time = 0
-        self.flask_cooldown = 1.0  # 1 second cooldown between flask uses
+        self.health_flask_cooldown = 3.0  # 3 second cooldown for health flask
+        self.mana_flask_cooldown = 3.0    # 3 second cooldown for mana flask
 
     def button_regularization(self, btn):
         return str(btn).split('.')[-1].replace("'",'')
@@ -211,6 +213,41 @@ class input_listener():
         # Start health monitoring if needed
         if self.health_monitoring_enabled:
             self.health_monitor.start_monitoring()
+        
+        # Also start health monitoring for POE2 auto flask
+        poe2_enabled = self.main.from_setting('poe2_auto_flask', 'enabled', 'bool')
+        if poe2_enabled:
+            # Set thresholds from config
+            try:
+                health_threshold = self.main.from_setting('poe2_auto_flask', 'health_threshold', 'int') / 100.0
+                mana_threshold = self.main.from_setting('poe2_auto_flask', 'mana_threshold', 'int') / 100.0
+                check_interval = self.main.from_setting('poe2_auto_flask', 'check_interval', 'str')
+                
+                # Load cooldown settings
+                health_cooldown = float(self.main.from_setting('poe2_auto_flask', 'health_flask_cooldown', 'str'))
+                mana_cooldown = float(self.main.from_setting('poe2_auto_flask', 'mana_flask_cooldown', 'str'))
+                
+                self.health_monitor.set_health_threshold(health_threshold)
+                self.health_monitor.set_mana_threshold(mana_threshold)
+                self.health_monitor.set_check_interval(check_interval)
+                self.health_monitor.set_debug_enabled(True)  # Enable debug for troubleshooting
+                
+                # Set cooldown times
+                self.health_flask_cooldown = health_cooldown
+                self.mana_flask_cooldown = mana_cooldown
+                
+                self.health_monitor.start_monitoring()
+                print(f"POE2 health monitoring started - Health threshold: {health_threshold*100:.0f}%, Mana threshold: {mana_threshold*100:.0f}%")
+                print(f"Cooldowns - Health: {health_cooldown}s, Mana: {mana_cooldown}s")
+            except Exception as e:
+                print(f"Error setting up POE2 health monitoring: {e}")
+                # Use default values
+                self.health_monitor.set_health_threshold(0.75)
+                self.health_monitor.set_mana_threshold(0.55)
+                self.health_monitor.set_check_interval(0.2)
+                self.health_monitor.set_debug_enabled(True)
+                self.health_monitor.start_monitoring()
+                print("POE2 health monitoring started with default values")
 
     def mouse_on_move(self, x, y):
         pass
@@ -347,61 +384,92 @@ class input_listener():
         if not poe2_enabled:
             return
         
-        # Check if we're in POE2 mode
-        if not hasattr(self.main, 'current_mode') or self.main.current_mode != 'poe2':
+        # Check if we're in POE2 mode or auto mode
+        current_mode = getattr(self.main, 'current_mode', 'poe1')
+        if current_mode not in ['poe2', 'auto']:
             return
         
         try:
             if flask_type == 'health':
-                # Check cooldown
-                if current_time - self.last_health_flask_time < self.flask_cooldown:
+                # Check cooldown for health flask (3 seconds)
+                if current_time - self.last_health_flask_time < self.health_flask_cooldown:
+                    remaining_time = self.health_flask_cooldown - (current_time - self.last_health_flask_time)
+                    print(f"Health flask on cooldown, {remaining_time:.1f}s remaining")
                     return
                 
                 health_flask_key = self.main.from_setting('poe2_auto_flask', 'health_flask_key', 'str')
                 if health_flask_key:
+                    # Add random delay (0-100ms)
+                    import random
+                    random_delay = random.uniform(0, 0.1)
+                    time.sleep(random_delay)
+                    
                     self.simulate_key_press(health_flask_key)
                     self.last_health_flask_time = current_time
-                    print(f"Auto triggered health flask: {health_flask_key}")
+                    print(f"Auto triggered health flask: {health_flask_key} (delay: {random_delay*1000:.1f}ms)")
             
             elif flask_type == 'mana':
-                # Check cooldown
-                if current_time - self.last_mana_flask_time < self.flask_cooldown:
+                # Check cooldown for mana flask (3 seconds)
+                if current_time - self.last_mana_flask_time < self.mana_flask_cooldown:
+                    remaining_time = self.mana_flask_cooldown - (current_time - self.last_mana_flask_time)
+                    print(f"Mana flask on cooldown, {remaining_time:.1f}s remaining")
                     return
                 
                 mana_flask_key = self.main.from_setting('poe2_auto_flask', 'mana_flask_key', 'str')
                 if mana_flask_key:
+                    # Add random delay (0-100ms)
+                    import random
+                    random_delay = random.uniform(0, 0.1)
+                    time.sleep(random_delay)
+                    
                     self.simulate_key_press(mana_flask_key)
                     self.last_mana_flask_time = current_time
-                    print(f"Auto triggered mana flask: {mana_flask_key}")
+                    print(f"Auto triggered mana flask: {mana_flask_key} (delay: {random_delay*1000:.1f}ms)")
                     
         except Exception as e:
             print(f"Error triggering flask: {e}")
     
     def simulate_key_press(self, key):
-        """Simulate a key press"""
+        """Simulate a key press using multiple methods"""
         try:
-            # Use pynput to simulate key press
-            from pynput.keyboard import Key, Controller
-            keyboard = Controller()
+            import time
+            import win32api
+            import win32con
+            import win32gui
             
-            # Handle special keys
-            if key.lower() in ['space', ' ']:
-                keyboard.press(Key.space)
-                keyboard.release(Key.space)
-            elif key.lower() == 'shift':
-                keyboard.press(Key.shift)
-                keyboard.release(Key.shift)
-            elif key.lower() == 'ctrl':
-                keyboard.press(Key.ctrl)
-                keyboard.release(Key.ctrl)
-            elif key.lower() == 'alt':
-                keyboard.press(Key.alt)
-                keyboard.release(Key.alt)
-            else:
-                # Regular character
-                keyboard.press(key.lower())
-                keyboard.release(key.lower())
+            # 确保游戏窗口有焦点
+            if hasattr(self.main, 'detector') and self.main.detector.poe_hWnd:
+                win32gui.SetForegroundWindow(self.main.detector.poe_hWnd)
+                time.sleep(0.1)  # 等待窗口切换
+            
+            # 方法1: 尝试 pydirectinput
+            try:
+                import pydirectinput
+                pydirectinput.press(key)
+                print(f"Successfully pressed key (pydirectinput): {key}")
+                return
+            except Exception as e:
+                print(f"pydirectinput failed: {e}")
+            
+            # 方法2: 使用 Windows API 作为备用
+            try:
+                # 将字符转换为虚拟键码
+                if key.isdigit():
+                    vk_code = ord(key)
+                else:
+                    vk_code = ord(key.upper())
                 
+                # 按下按键
+                win32api.keybd_event(vk_code, 0, 0, 0)
+                time.sleep(0.05)
+                # 释放按键
+                win32api.keybd_event(vk_code, 0, win32con.KEYEVENTF_KEYUP, 0)
+                print(f"Successfully pressed key (Windows API): {key}")
+                
+            except Exception as e:
+                print(f"Windows API failed: {e}")
+                raise e
+            
         except Exception as e:
             print(f"Error simulating key press {key}: {e}")
 

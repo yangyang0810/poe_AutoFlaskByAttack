@@ -24,25 +24,26 @@ class HealthMonitor(QThread):
         self.debug_enabled = False  # Print debug percentages when enabled
         
         # Different bar positions for different games
+        # Updated to focus on bottom-left health and bottom-right mana
         self.bar_configs = {
             'poe1': {
                 'health': {
-                    'x_start': 0.02, 'y_start': 0.85,
-                    'x_end': 0.25, 'y_end': 0.90
+                    'x_start': 0.01, 'y_start': 0.88,  # Bottom-left corner
+                    'x_end': 0.20, 'y_end': 0.95
                 },
                 'mana': {
-                    'x_start': 0.02, 'y_start': 0.90,
-                    'x_end': 0.25, 'y_end': 0.95
+                    'x_start': 0.80, 'y_start': 0.88,  # Bottom-right corner
+                    'x_end': 0.99, 'y_end': 0.95
                 }
             },
             'poe2': {
                 'health': {
-                    'x_start': 0.01, 'y_start': 0.90,
-                    'x_end': 0.14, 'y_end': 0.98
+                    'x_start': 0.01, 'y_start': 0.82,  # Bottom-left corner (高度调高一倍)
+                    'x_end': 0.115, 'y_end': 0.98  # 右边减少四分之一 (从15%到11.5%)
                 },
                 'mana': {
-                    'x_start': 0.86, 'y_start': 0.90,
-                    'x_end': 0.99, 'y_end': 0.98
+                    'x_start': 0.8875, 'y_start': 0.82,  # Bottom-right corner (高度调高一倍)
+                    'x_end': 0.99, 'y_end': 0.98  # 右边减少四分之一 (从85%到88.75%)
                 }
             }
         }
@@ -54,15 +55,27 @@ class HealthMonitor(QThread):
     
     def set_health_threshold(self, threshold):
         """Set health threshold (0.0 to 1.0)"""
-        self.health_threshold = max(0.1, min(0.9, threshold))
+        try:
+            threshold = float(threshold)
+            self.health_threshold = max(0.1, min(0.9, threshold))
+        except (ValueError, TypeError):
+            self.health_threshold = 0.7  # Default value
     
     def set_mana_threshold(self, threshold):
         """Set mana threshold (0.0 to 1.0)"""
-        self.mana_threshold = max(0.1, min(0.9, threshold))
+        try:
+            threshold = float(threshold)
+            self.mana_threshold = max(0.1, min(0.9, threshold))
+        except (ValueError, TypeError):
+            self.mana_threshold = 0.5  # Default value
     
     def set_check_interval(self, interval):
         """Set check interval in seconds"""
-        self.check_interval = max(0.1, min(1.0, interval))
+        try:
+            interval = float(interval)
+            self.check_interval = max(0.1, min(1.0, interval))
+        except (ValueError, TypeError):
+            self.check_interval = 0.2  # Default value
     
     def set_debug_enabled(self, enabled):
         """Enable or disable debug printing"""
@@ -105,7 +118,7 @@ class HealthMonitor(QThread):
             return None
     
     def analyze_health_bar(self, image):
-        """Analyze health bar image to get health percentage"""
+        """Analyze health orb image to get health percentage"""
         try:
             if image is None:
                 return 1.0
@@ -116,36 +129,54 @@ class HealthMonitor(QThread):
             
             # Convert to RGB if needed
             if len(img_array.shape) == 3 and img_array.shape[2] >= 3:
-                # Look for red pixels (health bar color)
-                # Health bar is typically red: high R, low G, low B
-                red_mask = (img_array[:, :, 0] > 120) & \
-                          (img_array[:, :, 1] < 80) & \
-                          (img_array[:, :, 2] < 80)
+                height, width = img_array.shape[:2]
                 
-                total_width = img_array.shape[1]
-                if total_width == 0:
+                # For circular orb, use pixel count method
+                # Look for red pixels with flexible color range
+                red_mask = (img_array[:, :, 0] > 60) & \
+                          (img_array[:, :, 1] < 180) & \
+                          (img_array[:, :, 2] < 180) & \
+                          (img_array[:, :, 0] > img_array[:, :, 1]) & \
+                          (img_array[:, :, 0] > img_array[:, :, 2])
+                
+                # Count total red pixels
+                red_pixel_count = np.sum(red_mask)
+                total_pixels = height * width
+                
+                if total_pixels == 0:
                     return 1.0
                 
-                # Calculate percentage based on red pixels from left
-                red_pixels_per_row = np.sum(red_mask, axis=0)
+                # Calculate percentage based on red pixel ratio
+                health_percentage = red_pixel_count / total_pixels
                 
-                # Find the rightmost red pixel
-                red_columns = np.where(red_pixels_per_row > 0)[0]
-                if len(red_columns) == 0:
-                    return 0.0
+                # Scale to more reasonable range (since orb might not be 100% red)
+                # Adjust this multiplier based on testing
+                health_percentage = min(1.0, health_percentage * 1.4)
                 
-                health_width = np.max(red_columns) + 1
-                health_percentage = health_width / total_width
+                # Add smoothing to reduce noise
+                if hasattr(self, 'last_health_percentage'):
+                    # Smooth with previous reading (60% current, 40% previous)
+                    health_percentage = 0.6 * health_percentage + 0.4 * self.last_health_percentage
+                
+                self.last_health_percentage = health_percentage
+                
+                # Debug output for first few times
+                if not hasattr(self, 'health_debug_count'):
+                    self.health_debug_count = 0
+                self.health_debug_count += 1
+                
+                if self.health_debug_count <= 5:
+                    print(f"[DEBUG] Health: red_pixels={red_pixel_count}, total={total_pixels}, raw_ratio={red_pixel_count/total_pixels:.3f}, final={health_percentage:.3f}")
                 
                 return min(1.0, max(0.0, health_percentage))
             
             return 1.0
         except Exception as e:
-            print(f"Error analyzing health bar: {e}")
+            print(f"Error analyzing health orb: {e}")
             return 1.0
     
     def analyze_mana_bar(self, image):
-        """Analyze mana bar image to get mana percentage"""
+        """Analyze mana orb image to get mana percentage"""
         try:
             if image is None:
                 return 1.0
@@ -156,32 +187,50 @@ class HealthMonitor(QThread):
             
             # Convert to RGB if needed
             if len(img_array.shape) == 3 and img_array.shape[2] >= 3:
-                # Look for blue pixels (mana bar color)
-                # Mana bar is typically blue: low R, low G, high B
-                blue_mask = (img_array[:, :, 0] < 80) & \
-                           (img_array[:, :, 1] < 100) & \
-                           (img_array[:, :, 2] > 120)
+                height, width = img_array.shape[:2]
                 
-                total_width = img_array.shape[1]
-                if total_width == 0:
+                # For circular orb, use pixel count method
+                # Look for blue pixels with flexible color range
+                blue_mask = (img_array[:, :, 0] < 180) & \
+                           (img_array[:, :, 1] < 180) & \
+                           (img_array[:, :, 2] > 60) & \
+                           (img_array[:, :, 2] > img_array[:, :, 0]) & \
+                           (img_array[:, :, 2] > img_array[:, :, 1])
+                
+                # Count total blue pixels
+                blue_pixel_count = np.sum(blue_mask)
+                total_pixels = height * width
+                
+                if total_pixels == 0:
                     return 1.0
                 
-                # Calculate percentage based on blue pixels from left
-                blue_pixels_per_row = np.sum(blue_mask, axis=0)
+                # Calculate percentage based on blue pixel ratio
+                mana_percentage = blue_pixel_count / total_pixels
                 
-                # Find the rightmost blue pixel
-                blue_columns = np.where(blue_pixels_per_row > 0)[0]
-                if len(blue_columns) == 0:
-                    return 0.0
+                # Scale to more reasonable range (since orb might not be 100% blue)
+                # Adjust this multiplier based on testing
+                mana_percentage = min(1.0, mana_percentage * 1.4)
                 
-                mana_width = np.max(blue_columns) + 1
-                mana_percentage = mana_width / total_width
+                # Add smoothing to reduce noise
+                if hasattr(self, 'last_mana_percentage'):
+                    # Smooth with previous reading (60% current, 40% previous)
+                    mana_percentage = 0.6 * mana_percentage + 0.4 * self.last_mana_percentage
+                
+                self.last_mana_percentage = mana_percentage
+                
+                # Debug output for first few times
+                if not hasattr(self, 'mana_debug_count'):
+                    self.mana_debug_count = 0
+                self.mana_debug_count += 1
+                
+                if self.mana_debug_count <= 5:
+                    print(f"[DEBUG] Mana: blue_pixels={blue_pixel_count}, total={total_pixels}, raw_ratio={blue_pixel_count/total_pixels:.3f}, final={mana_percentage:.3f}")
                 
                 return min(1.0, max(0.0, mana_percentage))
             
             return 1.0
         except Exception as e:
-            print(f"Error analyzing mana bar: {e}")
+            print(f"Error analyzing mana orb: {e}")
             return 1.0
     
     def update_health_mana(self):
@@ -198,6 +247,15 @@ class HealthMonitor(QThread):
             health_region = self.get_bar_region(game_config['health'])
             if health_region:
                 health_screenshot = ImageGrab.grab(health_region)
+                
+                # Save first health screenshot for debugging
+                if not hasattr(self, 'health_screenshot_saved'):
+                    health_screenshot.save('debug_health_screenshot.png')
+                    print(f"💾 已保存血量截图: debug_health_screenshot.png")
+                    print(f"📍 血量截图区域: {health_region}")
+                    print(f"📏 血量截图尺寸: {health_screenshot.size}")
+                    self.health_screenshot_saved = True
+                
                 new_health = self.analyze_health_bar(health_screenshot)
                 
                 # Check for significant health change
@@ -219,6 +277,15 @@ class HealthMonitor(QThread):
             mana_region = self.get_bar_region(game_config['mana'])
             if mana_region:
                 mana_screenshot = ImageGrab.grab(mana_region)
+                
+                # Save first mana screenshot for debugging
+                if not hasattr(self, 'mana_screenshot_saved'):
+                    mana_screenshot.save('debug_mana_screenshot.png')
+                    print(f"💾 已保存蓝量截图: debug_mana_screenshot.png")
+                    print(f"📍 蓝量截图区域: {mana_region}")
+                    print(f"📏 蓝量截图尺寸: {mana_screenshot.size}")
+                    self.mana_screenshot_saved = True
+                
                 new_mana = self.analyze_mana_bar(mana_screenshot)
                 
                 # Check for significant mana change

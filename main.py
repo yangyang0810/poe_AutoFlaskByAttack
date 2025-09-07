@@ -72,6 +72,9 @@ class MainWindow(QMainWindow):
             self.linstener.health_monitor.health_changed.connect(self.on_health_changed)
             self.linstener.health_monitor.mana_changed.connect(self.on_mana_changed)
             self.linstener.health_monitor.flask_trigger.connect(self.on_flask_triggered)
+            
+        # Set initial game mode and start health monitoring
+        self.set_game_mode()
         self.check_updata = check_version_thread()
         self.check_updata.update_signal.connect(self.need2update)
         self.check_updata.start()
@@ -130,6 +133,24 @@ class MainWindow(QMainWindow):
 
     def need2update(self):
         display_image(self.ui.label_logo, logo_update_png)
+    
+    def set_game_mode(self):
+        """Set game mode based on configuration"""
+        game_type = self.from_setting('global', 'game_type', 'str')
+        if game_type == 'auto':
+            # Try to detect game type automatically
+            # For now, default to poe2 if auto flask is enabled
+            poe2_enabled = self.from_setting('poe2_auto_flask', 'enabled', 'bool')
+            self.current_mode = 'poe2' if poe2_enabled else 'poe1'
+        else:
+            self.current_mode = game_type
+        
+        # Update health monitor mode
+        if hasattr(self.linstener, 'health_monitor'):
+            self.linstener.health_monitor.set_current_mode(self.current_mode)
+        
+        self.update_window_title()
+        print(f"Game mode set to: {self.current_mode}")
     
     def update_window_title(self):
         """Update window title based on current mode"""

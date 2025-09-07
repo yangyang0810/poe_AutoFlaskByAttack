@@ -10,7 +10,9 @@ default_setting = {
         'mana_threshold':'55',    # Mana percentage threshold for mana flask
         'health_flask_key':'1',   # Key for health flask
         'mana_flask_key':'2',     # Key for mana flask
-        'check_interval':'0.2'    # Check interval in seconds
+        'check_interval':'0.2',   # Check interval in seconds
+        'health_flask_cooldown':'1.0',  # Health flask cooldown in seconds
+        'mana_flask_cooldown':'5.0'     # Mana flask cooldown in seconds
     },
     'flask':{
         'key0':'[,,,,]',
