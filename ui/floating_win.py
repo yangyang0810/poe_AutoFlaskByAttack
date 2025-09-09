@@ -36,18 +36,29 @@ class canvas_label(QLabel):
         self.is_movingFloating = is_movingFloating
         self.x = 0
         self.y = 0
+        self.dragging = False  # track whether we are dragging
 
     def mousePressEvent(self, e):
-        if e.buttons() == Qt.LeftButton and not self.is_movingFloating():
-            self.event()
-        else:
+        if e.button() == Qt.LeftButton:
+            # Always prepare for drag; click-only will be handled on release
             self.x, self.y = win32api.GetCursorPos()
             self.parent.anchor()
+            self.dragging = False
 
     def mouseMoveEvent(self, e):
         if self.is_movingFloating():
             x, y = win32api.GetCursorPos()
-            self.parent.move2(x - self.x, y - self.y)
+            dx, dy = x - self.x, y - self.y
+            if abs(dx) > 0 or abs(dy) > 0:
+                self.dragging = True
+            self.parent.move2(dx, dy)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            # If not dragged and not in move mode, treat as click to trigger event
+            if not self.dragging and not self.is_movingFloating():
+                self.event()
+            self.dragging = False
 
 class B_form(canvas_win):
     def __init__(self, main):

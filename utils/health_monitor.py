@@ -127,6 +127,10 @@ class HealthMonitor(QThread):
             if img_array.size == 0:
                 return 1.0
             
+            # If poe2, prefer circular orb estimation within ROI
+            if getattr(self, 'current_mode', 'poe1') == 'poe2':
+                return self._estimate_orb_fill(image, color='red')
+
             # Convert to RGB if needed
             if len(img_array.shape) == 3 and img_array.shape[2] >= 3:
                 height, width = img_array.shape[:2]
@@ -185,6 +189,10 @@ class HealthMonitor(QThread):
             if img_array.size == 0:
                 return 1.0
             
+            # If poe2, prefer circular orb estimation within ROI
+            if getattr(self, 'current_mode', 'poe1') == 'poe2':
+                return self._estimate_orb_fill(image, color='blue')
+
             # Convert to RGB if needed
             if len(img_array.shape) == 3 and img_array.shape[2] >= 3:
                 height, width = img_array.shape[:2]
@@ -231,6 +239,62 @@ class HealthMonitor(QThread):
             return 1.0
         except Exception as e:
             print(f"Error analyzing mana orb: {e}")
+            return 1.0
+
+    def _estimate_orb_fill(self, image, color='red'):
+        """Estimate orb fill ratio within a central circular ROI using color dominance.
+
+        color: 'red' for health, 'blue' for mana.
+        """
+        try:
+            arr = np.array(image).astype('int16')
+            if arr.size == 0 or len(arr.shape) < 3 or arr.shape[2] < 3:
+                return 1.0
+
+            h, w = arr.shape[:2]
+            cy, cx = h // 2, w // 2
+            radius = int(0.45 * min(h, w))
+
+            yy, xx = np.ogrid[:h, :w]
+            circle_mask = (yy - cy) ** 2 + (xx - cx) ** 2 <= radius * radius
+
+            R = arr[:, :, 0]
+            G = arr[:, :, 1]
+            B = arr[:, :, 2]
+
+            if color == 'red':
+                dom = R - np.maximum(G, B)
+            else:
+                dom = B - np.maximum(R, G)
+            dom = np.maximum(dom, 0)
+
+            dom_in = dom[circle_mask]
+            if dom_in.size == 0:
+                return 1.0
+
+            # Normalize by robust percentile scale
+            p95 = float(np.percentile(dom_in, 95)) if dom_in.size > 0 else 1.0
+            scale = max(30.0, p95)
+            norm = np.clip(dom_in / scale, 0.0, 1.0)
+
+            # Threshold tuned from tests
+            thr = 0.22 if color == 'red' else 0.14
+            filled_ratio = float((norm >= thr).mean())
+
+            if color == 'blue':
+                # Boost when most of orb is bright
+                high_thr = 0.6
+                high_cover = float((norm >= high_thr).mean())
+                if high_cover >= 0.6:
+                    filled_ratio = max(filled_ratio, 0.98)
+                # Ensure small but non-zero when present
+                if dom_in.max() > 0 and filled_ratio < 0.04:
+                    filled_ratio = 0.05
+
+            # Clamp to [0,1]
+            return float(min(1.0, max(0.0, filled_ratio)))
+        except Exception as e:
+            print(f"Error in orb estimation: {e}")
             return 1.0
     
     def update_health_mana(self):
