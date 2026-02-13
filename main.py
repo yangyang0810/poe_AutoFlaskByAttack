@@ -30,7 +30,7 @@ from ui.floating_win import B_form
 from utils.button_event import btn_events
 from utils.input_listener import input_listener
 from utils.poe_detector import poe_detector
-from utils.check_versoin import check_version_thread
+from utils.check_version import check_version_thread
 from utils.utils import load_config, save_config, load_ini, save_ini, list_ini, base2Qpixmap, display_image
 from configs import default_setting
 from src.icon_png import icon_png

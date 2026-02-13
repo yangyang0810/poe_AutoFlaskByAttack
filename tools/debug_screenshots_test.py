@@ -202,7 +202,7 @@ def _format_pct(value: float) -> str:
 def main() -> int:
     """Entry point: analyze images in debug_screenshots and write result.log."""
 
-    project_root = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     screenshots_dir = os.path.join(project_root, "debug_screenshots")
     log_path = os.path.join(screenshots_dir, "result.log")
 

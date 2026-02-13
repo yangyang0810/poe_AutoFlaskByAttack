@@ -136,3 +136,8 @@ dmypy.json
 secret/
 test/
 __pycache__/
+
+# Project runtime artifacts
+log/
+debug_*.png
+debug_screenshots/result.log
