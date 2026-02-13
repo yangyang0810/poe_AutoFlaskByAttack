@@ -1,405 +1,344 @@
-import time
-import threading
+﻿import time
 from PIL import ImageGrab
 import numpy as np
 from PyQt5.QtCore import QThread, pyqtSignal
 
+
 class HealthMonitor(QThread):
-    """Health and mana monitoring system for POE games"""
-    health_changed = pyqtSignal(float)  # Signal emitted when health changes significantly
-    mana_changed = pyqtSignal(float)    # Signal emitted when mana changes significantly
-    flask_trigger = pyqtSignal(str)     # Signal to trigger flask ('health' or 'mana')
-    
+    """Health and mana monitoring system for POE games."""
+
+    health_changed = pyqtSignal(float)
+    mana_changed = pyqtSignal(float)
+    flask_trigger = pyqtSignal(str)  # 'health' or 'mana'
+
     def __init__(self, poe_detector):
         super().__init__()
         self.poe_detector = poe_detector
+
         self.current_health = 1.0
         self.current_mana = 1.0
-        self.health_threshold = 0.7  # Default 70% health threshold
-        self.mana_threshold = 0.5    # Default 50% mana threshold
-        self.check_interval = 0.2    # Check every 200ms
+
+        self.health_threshold = 0.7
+        self.mana_threshold = 0.5
+        self.check_interval = 0.2
         self.last_check_time = 0
         self.monitoring = False
-        self.current_mode = 'poe1'  # Default mode
-        self.debug_enabled = False  # Print debug percentages when enabled
-        
-        # Different bar positions for different games
-        # Updated to focus on bottom-left health and bottom-right mana
+        self.current_mode = 'poe1'
+        self.debug_enabled = False
+
+        # Smoothing + anti-false-trigger controls
+        self.ema_alpha = 0.45
+        self.trigger_confirm_frames = 2
+        self.low_health_frames = 0
+        self.low_mana_frames = 0
+
+        # Relative screenshot regions in window coordinates
         self.bar_configs = {
             'poe1': {
-                'health': {
-                    'x_start': 0.01, 'y_start': 0.88,  # Bottom-left corner
-                    'x_end': 0.20, 'y_end': 0.95
-                },
-                'mana': {
-                    'x_start': 0.80, 'y_start': 0.88,  # Bottom-right corner
-                    'x_end': 0.99, 'y_end': 0.95
-                }
+                'health': {'x_start': 0.01, 'y_start': 0.88, 'x_end': 0.20, 'y_end': 0.95},
+                'mana': {'x_start': 0.80, 'y_start': 0.88, 'x_end': 0.99, 'y_end': 0.95},
             },
             'poe2': {
-                'health': {
-                    'x_start': 0.01, 'y_start': 0.82,  # Bottom-left corner (高度调高一倍)
-                    'x_end': 0.115, 'y_end': 0.98  # 右边减少四分之一 (从15%到11.5%)
-                },
-                'mana': {
-                    'x_start': 0.8875, 'y_start': 0.82,  # Bottom-right corner (高度调高一倍)
-                    'x_end': 0.99, 'y_end': 0.98  # 右边减少四分之一 (从85%到88.75%)
-                }
-            }
+                # Wider/taller orb ROI to cover inner liquid region across resolutions
+                'health': {'x_start': 0.012, 'y_start': 0.80, 'x_end': 0.145, 'y_end': 0.985},
+                'mana': {'x_start': 0.855, 'y_start': 0.80, 'x_end': 0.988, 'y_end': 0.985},
+            },
         }
-    
+
     def set_current_mode(self, mode):
-        """Set current game mode"""
         self.current_mode = mode
         print(f"Health monitor set to {mode} mode")
-    
+
     def set_health_threshold(self, threshold):
-        """Set health threshold (0.0 to 1.0)"""
         try:
             threshold = float(threshold)
             self.health_threshold = max(0.1, min(0.9, threshold))
         except (ValueError, TypeError):
-            self.health_threshold = 0.7  # Default value
-    
+            self.health_threshold = 0.7
+
     def set_mana_threshold(self, threshold):
-        """Set mana threshold (0.0 to 1.0)"""
         try:
             threshold = float(threshold)
             self.mana_threshold = max(0.1, min(0.9, threshold))
         except (ValueError, TypeError):
-            self.mana_threshold = 0.5  # Default value
-    
+            self.mana_threshold = 0.5
+
     def set_check_interval(self, interval):
-        """Set check interval in seconds"""
         try:
             interval = float(interval)
             self.check_interval = max(0.1, min(1.0, interval))
         except (ValueError, TypeError):
-            self.check_interval = 0.2  # Default value
-    
+            self.check_interval = 0.2
+
     def set_debug_enabled(self, enabled):
-        """Enable or disable debug printing"""
         self.debug_enabled = bool(enabled)
-    
+
     def get_current_health(self):
-        """Get current health percentage"""
         return self.current_health
-    
+
     def get_current_mana(self):
-        """Get current mana percentage"""
         return self.current_mana
-    
+
     def is_low_health(self):
-        """Check if health is below threshold"""
         return self.current_health <= self.health_threshold
-    
+
     def is_low_mana(self):
-        """Check if mana is below threshold"""
         return self.current_mana <= self.mana_threshold
-    
+
     def get_bar_region(self, bar_config):
-        """Calculate screen coordinates for health/mana bar"""
         try:
             poe_running, rect = self.poe_detector.get_poe_rect()
             if not poe_running:
                 return None
-                
+
             x1, y1, x2, y2 = rect
             w = x2 - x1
             h = y2 - y1
-            
+
             bar_x1 = x1 + int(w * bar_config['x_start'])
             bar_y1 = y1 + int(h * bar_config['y_start'])
             bar_x2 = x1 + int(w * bar_config['x_end'])
             bar_y2 = y1 + int(h * bar_config['y_end'])
-            
             return (bar_x1, bar_y1, bar_x2, bar_y2)
-        except:
+        except Exception:
             return None
-    
+
     def analyze_health_bar(self, image):
-        """Analyze health orb image to get health percentage"""
         try:
             if image is None:
                 return 1.0
-                
+
             img_array = np.array(image)
             if img_array.size == 0:
                 return 1.0
-            
-            # If poe2, prefer circular orb estimation within ROI
-            if getattr(self, 'current_mode', 'poe1') == 'poe2':
+
+            if self.current_mode == 'poe2':
                 return self._estimate_orb_fill(image, color='red')
 
-            # Convert to RGB if needed
+            # Legacy POE1 estimator
             if len(img_array.shape) == 3 and img_array.shape[2] >= 3:
-                height, width = img_array.shape[:2]
-                
-                # For circular orb, use pixel count method
-                # Look for red pixels with flexible color range
-                red_mask = (img_array[:, :, 0] > 60) & \
-                          (img_array[:, :, 1] < 180) & \
-                          (img_array[:, :, 2] < 180) & \
-                          (img_array[:, :, 0] > img_array[:, :, 1]) & \
-                          (img_array[:, :, 0] > img_array[:, :, 2])
-                
-                # Count total red pixels
-                red_pixel_count = np.sum(red_mask)
-                total_pixels = height * width
-                
-                if total_pixels == 0:
+                h, w = img_array.shape[:2]
+                red_mask = (
+                    (img_array[:, :, 0] > 60)
+                    & (img_array[:, :, 1] < 180)
+                    & (img_array[:, :, 2] < 180)
+                    & (img_array[:, :, 0] > img_array[:, :, 1])
+                    & (img_array[:, :, 0] > img_array[:, :, 2])
+                )
+                total = h * w
+                if total == 0:
                     return 1.0
-                
-                # Calculate percentage based on red pixel ratio
-                health_percentage = red_pixel_count / total_pixels
-                
-                # Scale to more reasonable range (since orb might not be 100% red)
-                # Adjust this multiplier based on testing
-                health_percentage = min(1.0, health_percentage * 1.4)
-                
-                # Add smoothing to reduce noise
-                if hasattr(self, 'last_health_percentage'):
-                    # Smooth with previous reading (60% current, 40% previous)
-                    health_percentage = 0.6 * health_percentage + 0.4 * self.last_health_percentage
-                
-                self.last_health_percentage = health_percentage
-                
-                # Debug output for first few times
-                if not hasattr(self, 'health_debug_count'):
-                    self.health_debug_count = 0
-                self.health_debug_count += 1
-                
-                if self.health_debug_count <= 5:
-                    print(f"[DEBUG] Health: red_pixels={red_pixel_count}, total={total_pixels}, raw_ratio={red_pixel_count/total_pixels:.3f}, final={health_percentage:.3f}")
-                
-                return min(1.0, max(0.0, health_percentage))
-            
+                return float(min(1.0, max(0.0, (np.sum(red_mask) / total) * 1.4)))
+
             return 1.0
         except Exception as e:
             print(f"Error analyzing health orb: {e}")
             return 1.0
-    
+
     def analyze_mana_bar(self, image):
-        """Analyze mana orb image to get mana percentage"""
         try:
             if image is None:
                 return 1.0
-                
+
             img_array = np.array(image)
             if img_array.size == 0:
                 return 1.0
-            
-            # If poe2, prefer circular orb estimation within ROI
-            if getattr(self, 'current_mode', 'poe1') == 'poe2':
+
+            if self.current_mode == 'poe2':
                 return self._estimate_orb_fill(image, color='blue')
 
-            # Convert to RGB if needed
+            # Legacy POE1 estimator
             if len(img_array.shape) == 3 and img_array.shape[2] >= 3:
-                height, width = img_array.shape[:2]
-                
-                # For circular orb, use pixel count method
-                # Look for blue pixels with flexible color range
-                blue_mask = (img_array[:, :, 0] < 180) & \
-                           (img_array[:, :, 1] < 180) & \
-                           (img_array[:, :, 2] > 60) & \
-                           (img_array[:, :, 2] > img_array[:, :, 0]) & \
-                           (img_array[:, :, 2] > img_array[:, :, 1])
-                
-                # Count total blue pixels
-                blue_pixel_count = np.sum(blue_mask)
-                total_pixels = height * width
-                
-                if total_pixels == 0:
+                h, w = img_array.shape[:2]
+                blue_mask = (
+                    (img_array[:, :, 0] < 180)
+                    & (img_array[:, :, 1] < 180)
+                    & (img_array[:, :, 2] > 60)
+                    & (img_array[:, :, 2] > img_array[:, :, 0])
+                    & (img_array[:, :, 2] > img_array[:, :, 1])
+                )
+                total = h * w
+                if total == 0:
                     return 1.0
-                
-                # Calculate percentage based on blue pixel ratio
-                mana_percentage = blue_pixel_count / total_pixels
-                
-                # Scale to more reasonable range (since orb might not be 100% blue)
-                # Adjust this multiplier based on testing
-                mana_percentage = min(1.0, mana_percentage * 1.4)
-                
-                # Add smoothing to reduce noise
-                if hasattr(self, 'last_mana_percentage'):
-                    # Smooth with previous reading (60% current, 40% previous)
-                    mana_percentage = 0.6 * mana_percentage + 0.4 * self.last_mana_percentage
-                
-                self.last_mana_percentage = mana_percentage
-                
-                # Debug output for first few times
-                if not hasattr(self, 'mana_debug_count'):
-                    self.mana_debug_count = 0
-                self.mana_debug_count += 1
-                
-                if self.mana_debug_count <= 5:
-                    print(f"[DEBUG] Mana: blue_pixels={blue_pixel_count}, total={total_pixels}, raw_ratio={blue_pixel_count/total_pixels:.3f}, final={mana_percentage:.3f}")
-                
-                return min(1.0, max(0.0, mana_percentage))
-            
+                return float(min(1.0, max(0.0, (np.sum(blue_mask) / total) * 1.4)))
+
             return 1.0
         except Exception as e:
             print(f"Error analyzing mana orb: {e}")
             return 1.0
 
     def _estimate_orb_fill(self, image, color='red'):
-        """Estimate orb fill ratio within a central circular ROI using color dominance.
+        """POE2 orb fill estimation using HSV mask + circle mask.
 
-        color: 'red' for health, 'blue' for mana.
+        Combines area ratio and bottom-up fill-height estimate for robustness.
         """
         try:
-            arr = np.array(image).astype('int16')
-            if arr.size == 0 or len(arr.shape) < 3 or arr.shape[2] < 3:
+            hsv = np.array(image.convert('HSV')).astype('int16')
+            if hsv.size == 0 or len(hsv.shape) < 3 or hsv.shape[2] < 3:
                 return 1.0
 
-            h, w = arr.shape[:2]
+            h, w = hsv.shape[:2]
             cy, cx = h // 2, w // 2
-            radius = int(0.45 * min(h, w))
+            radius = int(0.46 * min(h, w))
 
             yy, xx = np.ogrid[:h, :w]
             circle_mask = (yy - cy) ** 2 + (xx - cx) ** 2 <= radius * radius
 
-            R = arr[:, :, 0]
-            G = arr[:, :, 1]
-            B = arr[:, :, 2]
+            H = hsv[:, :, 0]
+            S = hsv[:, :, 1]
+            V = hsv[:, :, 2]
 
             if color == 'red':
-                dom = R - np.maximum(G, B)
+                # Red wraps around hue range in HSV.
+                color_mask = (((H <= 18) | (H >= 235)) & (S >= 55) & (V >= 35))
             else:
-                dom = B - np.maximum(R, G)
-            dom = np.maximum(dom, 0)
+                # Blue band tuned for POE2 mana orb.
+                color_mask = ((H >= 130) & (H <= 185) & (S >= 45) & (V >= 28))
 
-            dom_in = dom[circle_mask]
-            if dom_in.size == 0:
+            mask = color_mask & circle_mask
+
+            circle_pixels = int(np.sum(circle_mask))
+            if circle_pixels <= 0:
                 return 1.0
 
-            # Normalize by robust percentile scale
-            p95 = float(np.percentile(dom_in, 95)) if dom_in.size > 0 else 1.0
-            scale = max(30.0, p95)
-            norm = np.clip(dom_in / scale, 0.0, 1.0)
+            area_ratio = float(np.sum(mask)) / float(circle_pixels)
 
-            # Threshold tuned from tests
-            thr = 0.22 if color == 'red' else 0.14
-            filled_ratio = float((norm >= thr).mean())
+            # Estimate liquid level by row coverage, then scan bottom-up.
+            row_total = np.sum(circle_mask, axis=1).astype('float32')
+            row_color = np.sum(mask, axis=1).astype('float32')
+            valid_rows = row_total > 0
+            row_cov = np.zeros_like(row_total, dtype='float32')
+            row_cov[valid_rows] = row_color[valid_rows] / row_total[valid_rows]
 
-            if color == 'blue':
-                # Boost when most of orb is bright
-                high_thr = 0.6
-                high_cover = float((norm >= high_thr).mean())
-                if high_cover >= 0.6:
-                    filled_ratio = max(filled_ratio, 0.98)
-                # Ensure small but non-zero when present
-                if dom_in.max() > 0 and filled_ratio < 0.04:
-                    filled_ratio = 0.05
+            kernel = np.ones(5, dtype='float32') / 5.0
+            row_cov_s = np.convolve(row_cov, kernel, mode='same')
 
-            # Clamp to [0,1]
+            if np.any(valid_rows):
+                p90 = float(np.percentile(row_cov_s[valid_rows], 90))
+            else:
+                p90 = 0.0
+            row_thr = max(0.06, p90 * 0.32)
+            row_on = row_cov_s >= row_thr
+
+            idx_valid = np.where(valid_rows)[0]
+            if idx_valid.size == 0:
+                return 1.0
+            top_i, bot_i = int(idx_valid[0]), int(idx_valid[-1])
+
+            run = 0
+            gap = 0
+            max_gap = 2
+            for i in range(bot_i, top_i - 1, -1):
+                if not valid_rows[i]:
+                    continue
+                if row_on[i]:
+                    run += 1
+                    gap = 0
+                else:
+                    gap += 1
+                    if gap > max_gap:
+                        break
+
+            fill_height = float(run) / float(max(1, bot_i - top_i + 1))
+
+            # Combined score: area is stable, height tracks liquid boundary.
+            filled_ratio = 0.58 * area_ratio + 0.42 * fill_height
             return float(min(1.0, max(0.0, filled_ratio)))
         except Exception as e:
             print(f"Error in orb estimation: {e}")
             return 1.0
-    
+
     def update_health_mana(self):
-        """Update current health and mana values"""
         try:
-            # Only check if POE is active
             if not self.poe_detector.check_immediately():
                 return
-            
-            # Get current game config based on mode
+
             game_config = self.bar_configs.get(self.current_mode, self.bar_configs['poe1'])
-            
-            # Monitor health
+
             health_region = self.get_bar_region(game_config['health'])
             if health_region:
                 health_screenshot = ImageGrab.grab(health_region)
-                
-                # Save first health screenshot for debugging
+
                 if not hasattr(self, 'health_screenshot_saved'):
                     health_screenshot.save('debug_health_screenshot.png')
-                    print(f"💾 已保存血量截图: debug_health_screenshot.png")
-                    print(f"📍 血量截图区域: {health_region}")
-                    print(f"📏 血量截图尺寸: {health_screenshot.size}")
+                    print(f"Saved health debug screenshot: {health_region}, size={health_screenshot.size}")
                     self.health_screenshot_saved = True
-                
-                new_health = self.analyze_health_bar(health_screenshot)
-                
-                # Check for significant health change
-                if abs(new_health - self.current_health) > 0.05:  # 5% change threshold
+
+                raw_health = self.analyze_health_bar(health_screenshot)
+                new_health = self.ema_alpha * raw_health + (1.0 - self.ema_alpha) * self.current_health
+
+                if abs(new_health - self.current_health) > 0.05:
                     self.current_health = new_health
                     self.health_changed.emit(new_health)
                 else:
                     self.current_health = new_health
-                
-                # Debug print
-                if self.debug_enabled:
-                    print(f"[POE2] Health: {self.current_health*100:.0f}%")
 
-                # Check if health flask should be triggered
+                if self.debug_enabled:
+                    print(f"[POE2] Health: {self.current_health * 100:.0f}% (raw={raw_health * 100:.0f}%)")
+
                 if self.is_low_health():
+                    self.low_health_frames += 1
+                else:
+                    self.low_health_frames = 0
+                if self.low_health_frames >= self.trigger_confirm_frames:
                     self.flask_trigger.emit('health')
-            
-            # Monitor mana
+
             mana_region = self.get_bar_region(game_config['mana'])
             if mana_region:
                 mana_screenshot = ImageGrab.grab(mana_region)
-                
-                # Save first mana screenshot for debugging
+
                 if not hasattr(self, 'mana_screenshot_saved'):
                     mana_screenshot.save('debug_mana_screenshot.png')
-                    print(f"💾 已保存蓝量截图: debug_mana_screenshot.png")
-                    print(f"📍 蓝量截图区域: {mana_region}")
-                    print(f"📏 蓝量截图尺寸: {mana_screenshot.size}")
+                    print(f"Saved mana debug screenshot: {mana_region}, size={mana_screenshot.size}")
                     self.mana_screenshot_saved = True
-                
-                new_mana = self.analyze_mana_bar(mana_screenshot)
-                
-                # Check for significant mana change
-                if abs(new_mana - self.current_mana) > 0.05:  # 5% change threshold
+
+                raw_mana = self.analyze_mana_bar(mana_screenshot)
+                new_mana = self.ema_alpha * raw_mana + (1.0 - self.ema_alpha) * self.current_mana
+
+                if abs(new_mana - self.current_mana) > 0.05:
                     self.current_mana = new_mana
                     self.mana_changed.emit(new_mana)
                 else:
                     self.current_mana = new_mana
-                
-                # Debug print
-                if self.debug_enabled:
-                    print(f"[POE2] Mana: {self.current_mana*100:.0f}%")
 
-                # Check if mana flask should be triggered
+                if self.debug_enabled:
+                    print(f"[POE2] Mana: {self.current_mana * 100:.0f}% (raw={raw_mana * 100:.0f}%)")
+
                 if self.is_low_mana():
+                    self.low_mana_frames += 1
+                else:
+                    self.low_mana_frames = 0
+                if self.low_mana_frames >= self.trigger_confirm_frames:
                     self.flask_trigger.emit('mana')
-                
+
         except Exception as e:
             print(f"Error updating health/mana: {e}")
-    
+
     def start_monitoring(self):
-        """Start health monitoring"""
         self.monitoring = True
         if not self.isRunning():
             self.start()
-    
+
     def stop_monitoring(self):
-        """Stop health monitoring"""
         self.monitoring = False
         if self.isRunning():
             self.quit()
             self.wait()
-    
+
     def run(self):
-        """Main monitoring loop"""
         while self.monitoring:
             try:
-                current_time = time.time()
-                if current_time - self.last_check_time >= self.check_interval:
+                now = time.time()
+                if now - self.last_check_time >= self.check_interval:
                     self.update_health_mana()
-                    self.last_check_time = current_time
-                
-                # Dynamic sleep based on health level
+                    self.last_check_time = now
+
                 if self.current_health <= 0.2:
-                    time.sleep(0.05)  # Check more frequently when low health
+                    time.sleep(0.05)
                 elif self.current_health <= 0.5:
-                    time.sleep(0.1)   # Normal frequency
+                    time.sleep(0.1)
                 else:
-                    time.sleep(0.2)   # Less frequent when healthy
-                    
+                    time.sleep(0.2)
             except Exception as e:
                 print(f"Error in health monitor loop: {e}")
                 time.sleep(0.1)
