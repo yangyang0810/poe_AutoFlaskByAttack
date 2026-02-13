@@ -125,6 +125,8 @@ class input_listener():
         return _temp
 
     def load_and_start(self, setting):
+        # POE2 tool behavior: always keep auto flask enabled.
+        self.main.modfy_setting('poe2_auto_flask', 'enabled', True)
         switch = setting['switch']
         flasks = setting['flask_key']
         flask_times = setting['flask_time']
@@ -215,39 +217,37 @@ class input_listener():
             self.health_monitor.start_monitoring()
         
         # Also start health monitoring for POE2 auto flask
-        poe2_enabled = self.main.from_setting('poe2_auto_flask', 'enabled', 'bool')
-        if poe2_enabled:
-            # Set thresholds from config
-            try:
-                health_threshold = self.main.from_setting('poe2_auto_flask', 'health_threshold', 'int') / 100.0
-                mana_threshold = self.main.from_setting('poe2_auto_flask', 'mana_threshold', 'int') / 100.0
-                check_interval = self.main.from_setting('poe2_auto_flask', 'check_interval', 'str')
-                
-                # Load cooldown settings
-                health_cooldown = float(self.main.from_setting('poe2_auto_flask', 'health_flask_cooldown', 'str'))
-                mana_cooldown = float(self.main.from_setting('poe2_auto_flask', 'mana_flask_cooldown', 'str'))
-                
-                self.health_monitor.set_health_threshold(health_threshold)
-                self.health_monitor.set_mana_threshold(mana_threshold)
-                self.health_monitor.set_check_interval(check_interval)
-                self.health_monitor.set_debug_enabled(True)  # Enable debug for troubleshooting
-                
-                # Set cooldown times
-                self.health_flask_cooldown = health_cooldown
-                self.mana_flask_cooldown = mana_cooldown
-                
-                self.health_monitor.start_monitoring()
-                print(f"POE2 health monitoring started - Health threshold: {health_threshold*100:.0f}%, Mana threshold: {mana_threshold*100:.0f}%")
-                print(f"Cooldowns - Health: {health_cooldown}s, Mana: {mana_cooldown}s")
-            except Exception as e:
-                print(f"Error setting up POE2 health monitoring: {e}")
-                # Use default values
-                self.health_monitor.set_health_threshold(0.75)
-                self.health_monitor.set_mana_threshold(0.55)
-                self.health_monitor.set_check_interval(0.2)
-                self.health_monitor.set_debug_enabled(True)
-                self.health_monitor.start_monitoring()
-                print("POE2 health monitoring started with default values")
+        # Set thresholds from config
+        try:
+            health_threshold = self.main.from_setting('poe2_auto_flask', 'health_threshold', 'int') / 100.0
+            mana_threshold = self.main.from_setting('poe2_auto_flask', 'mana_threshold', 'int') / 100.0
+            check_interval = self.main.from_setting('poe2_auto_flask', 'check_interval', 'str')
+            
+            # Load cooldown settings
+            health_cooldown = float(self.main.from_setting('poe2_auto_flask', 'health_flask_cooldown', 'str'))
+            mana_cooldown = float(self.main.from_setting('poe2_auto_flask', 'mana_flask_cooldown', 'str'))
+            
+            self.health_monitor.set_health_threshold(health_threshold)
+            self.health_monitor.set_mana_threshold(mana_threshold)
+            self.health_monitor.set_check_interval(check_interval)
+            self.health_monitor.set_debug_enabled(True)  # Enable debug for troubleshooting
+            
+            # Set cooldown times
+            self.health_flask_cooldown = health_cooldown
+            self.mana_flask_cooldown = mana_cooldown
+            
+            self.health_monitor.start_monitoring()
+            print(f"POE2 health monitoring started - Health threshold: {health_threshold*100:.0f}%, Mana threshold: {mana_threshold*100:.0f}%")
+            print(f"Cooldowns - Health: {health_cooldown}s, Mana: {mana_cooldown}s")
+        except Exception as e:
+            print(f"Error setting up POE2 health monitoring: {e}")
+            # Use default values
+            self.health_monitor.set_health_threshold(0.75)
+            self.health_monitor.set_mana_threshold(0.55)
+            self.health_monitor.set_check_interval(0.2)
+            self.health_monitor.set_debug_enabled(True)
+            self.health_monitor.start_monitoring()
+            print("POE2 health monitoring started with default values")
 
     def mouse_on_move(self, x, y):
         pass
@@ -378,11 +378,6 @@ class input_listener():
     def on_flask_trigger(self, flask_type):
         """Handle automatic flask trigger based on health/mana thresholds"""
         current_time = time.time()
-        
-        # Check if POE2 auto flask is enabled
-        poe2_enabled = self.main.from_setting('poe2_auto_flask', 'enabled', 'bool')
-        if not poe2_enabled:
-            return
         
         # Check if we're in POE2 mode or auto mode
         current_mode = getattr(self.main, 'current_mode', 'poe1')

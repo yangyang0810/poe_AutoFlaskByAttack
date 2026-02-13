@@ -31,6 +31,8 @@ class HealthMonitor(QThread):
         self.trigger_confirm_frames = 2
         self.low_health_frames = 0
         self.low_mana_frames = 0
+        self.health_initialized = False
+        self.mana_initialized = False
 
         # Relative screenshot regions in window coordinates
         self.bar_configs = {
@@ -40,8 +42,10 @@ class HealthMonitor(QThread):
             },
             'poe2': {
                 # Wider/taller orb ROI to cover inner liquid region across resolutions
-                'health': {'x_start': 0.012, 'y_start': 0.80, 'x_end': 0.145, 'y_end': 0.985},
-                'mana': {'x_start': 0.855, 'y_start': 0.80, 'x_end': 0.988, 'y_end': 0.985},
+                # Health: shrink from right by 1/5 of original width.
+                # Mana: shrink from left by 1/5 of original width.
+                'health': {'x_start': 0.012, 'y_start': 0.80, 'x_end': 0.1184, 'y_end': 0.985},
+                'mana': {'x_start': 0.8816, 'y_start': 0.80, 'x_end': 0.988, 'y_end': 0.985},
             },
         }
 
@@ -173,6 +177,7 @@ class HealthMonitor(QThread):
         Combines area ratio and bottom-up fill-height estimate for robustness.
         """
         try:
+            rgb = np.array(image).astype('int16')
             hsv = np.array(image.convert('HSV')).astype('int16')
             if hsv.size == 0 or len(hsv.shape) < 3 or hsv.shape[2] < 3:
                 return 1.0
@@ -242,7 +247,30 @@ class HealthMonitor(QThread):
             fill_height = float(run) / float(max(1, bot_i - top_i + 1))
 
             # Combined score: area is stable, height tracks liquid boundary.
-            filled_ratio = 0.58 * area_ratio + 0.42 * fill_height
+            hsv_ratio = 0.58 * area_ratio + 0.42 * fill_height
+
+            # Fallback to legacy dominance estimate when HSV is weak/noisy.
+            R = rgb[:, :, 0]
+            G = rgb[:, :, 1]
+            B = rgb[:, :, 2]
+            if color == 'red':
+                dom = R - np.maximum(G, B)
+                legacy_thr = 0.22
+            else:
+                dom = B - np.maximum(R, G)
+                legacy_thr = 0.14
+            dom = np.maximum(dom, 0)
+            dom_in = dom[circle_mask]
+            if dom_in.size > 0:
+                p95 = float(np.percentile(dom_in, 95))
+                scale = max(30.0, p95)
+                norm = np.clip(dom_in / scale, 0.0, 1.0)
+                legacy_ratio = float((norm >= legacy_thr).mean())
+            else:
+                legacy_ratio = hsv_ratio
+
+            # Prefer HSV but keep legacy as safety net.
+            filled_ratio = max(0.72 * hsv_ratio + 0.28 * legacy_ratio, legacy_ratio * 0.88)
             return float(min(1.0, max(0.0, filled_ratio)))
         except Exception as e:
             print(f"Error in orb estimation: {e}")
@@ -267,11 +295,12 @@ class HealthMonitor(QThread):
                 raw_health = self.analyze_health_bar(health_screenshot)
                 new_health = self.ema_alpha * raw_health + (1.0 - self.ema_alpha) * self.current_health
 
-                if abs(new_health - self.current_health) > 0.05:
-                    self.current_health = new_health
+                old_health = self.current_health
+                self.current_health = new_health
+                # Update UI more reliably for POE2 even when variation is small.
+                if (not self.health_initialized) or abs(new_health - old_health) > 0.01:
                     self.health_changed.emit(new_health)
-                else:
-                    self.current_health = new_health
+                    self.health_initialized = True
 
                 if self.debug_enabled:
                     print(f"[POE2] Health: {self.current_health * 100:.0f}% (raw={raw_health * 100:.0f}%)")
@@ -295,11 +324,11 @@ class HealthMonitor(QThread):
                 raw_mana = self.analyze_mana_bar(mana_screenshot)
                 new_mana = self.ema_alpha * raw_mana + (1.0 - self.ema_alpha) * self.current_mana
 
-                if abs(new_mana - self.current_mana) > 0.05:
-                    self.current_mana = new_mana
+                old_mana = self.current_mana
+                self.current_mana = new_mana
+                if (not self.mana_initialized) or abs(new_mana - old_mana) > 0.01:
                     self.mana_changed.emit(new_mana)
-                else:
-                    self.current_mana = new_mana
+                    self.mana_initialized = True
 
                 if self.debug_enabled:
                     print(f"[POE2] Mana: {self.current_mana * 100:.0f}% (raw={raw_mana * 100:.0f}%)")
